@@ -1,6 +1,6 @@
-## brother\_ql\_web
+## labelprinter\_ql\_web
 
-This is a web service to print labels on Brother QL and DYMO LabelWriter label printers.
+This is a web service to print labels on label printers.
 
 You need Python 3 for this software to work.
 
@@ -98,9 +98,9 @@ Copy `config.example.json` to `config.json` (e.g. `cp config.example.json config
 
 ### Startup
 
-To start the server, run `./brother_ql_web.py`. The command line parameters overwrite the values configured in `config.json`. Here's its command line interface:
+To start the server, run `./labelprinter_ql_web.py`. The command line parameters overwrite the values configured in `config.json`. Here's its command line interface:
 
-    usage: brother_ql_web.py [-h] [--port PORT] [--loglevel LOGLEVEL]
+    usage: labelprinter_ql_web.py [-h] [--port PORT] [--loglevel LOGLEVEL]
                              [--font-folder FONT_FOLDER]
                              [--default-label-size DEFAULT_LABEL_SIZE]
                              [--default-orientation {standard,rotated}]
@@ -108,7 +108,7 @@ To start the server, run `./brother_ql_web.py`. The command line parameters over
                              [--printer-type {brother_ql,dymo}]
                              [printer]
     
-    This is a web service to print labels on Brother QL and DYMO label printers.
+    This is a web service to print labels on label printers.
     
     positional arguments:
       printer               String descriptor for the printer to use (like
@@ -136,12 +136,12 @@ To start the server, run `./brother_ql_web.py`. The command line parameters over
 
 Brother QL printer:
 ```bash
-./brother_ql_web.py --printer-type brother_ql --model QL-700 file:///dev/usb/lp0
+./labelprinter_ql_web.py --printer-type brother_ql --model QL-700 file:///dev/usb/lp0
 ```
 
 DYMO LabelWriter printer:
 ```bash
-./brother_ql_web.py --printer-type dymo --model LabelWriter-450 "DYMO LabelWriter 450"
+./labelprinter_ql_web.py --printer-type dymo --model LabelWriter-450 "DYMO LabelWriter 450"
 ```
 
 ### Usage

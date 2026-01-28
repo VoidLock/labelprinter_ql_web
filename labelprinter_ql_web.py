@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-This is a web service to print labels on Brother QL and DYMO label printers.
+This is a web service to print labels on label printers.
 """
 
 import sys, logging, random, json, argparse
@@ -132,11 +132,11 @@ def create_label_im(text, **kwargs):
     
     width, height = kwargs['width'], kwargs['height']
     
-    # Handle endless labels (Brother QL only)
+    # Handle endless labels
     if kwargs['orientation'] == 'standard':
-        # For die-cut labels and DYMO labels, keep fixed dimensions
-        # For Brother QL endless labels, adjust height based on content
-        if label_type == 'endless':  # String for DYMO compatibility
+        # For die-cut labels, keep fixed dimensions
+        # For endless labels, adjust height based on content
+        if label_type == 'endless':  # String for compatibility
             height = textsize[1] + kwargs['margin_top'] + kwargs['margin_bottom']
     elif kwargs['orientation'] == 'rotated':
         if label_type == 'endless':
@@ -348,7 +348,7 @@ def main():
     parser.add_argument('--font-folder', default=False, help='folder for additional .ttf/.otf fonts')
     parser.add_argument('--default-label-size', default=False, help='Label size inserted in your printer. Defaults to 62.')
     parser.add_argument('--default-orientation', default=False, choices=('standard', 'rotated'), help='Label orientation, defaults to "standard". To turn your text by 90°, state "rotated".')
-    parser.add_argument('--model', default=False, help='The model of your printer (e.g., QL-500 for Brother QL, LabelWriter-450 for DYMO)')
+    parser.add_argument('--model', default=False, help='The model of your printer (e.g., QL-500, LabelWriter-450)')
     parser.add_argument('--printer-type', default=False, choices=['brother_ql', 'dymo'], help='Type of printer: brother_ql or dymo')
     parser.add_argument('printer',  nargs='?', default=False, help='String descriptor for the printer to use (like tcp://192.168.0.23:9100 or file:///dev/usb/lp0)')
     args = parser.parse_args()
