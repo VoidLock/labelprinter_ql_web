@@ -6,6 +6,7 @@
     "ADDITIONAL_FONT_FOLDER": false
   },
   "PRINTER": {
+    "TYPE": "brother_ql",
     "MODEL": "QL-500",
     "PRINTER": "file:///dev/usb/lp1"
   },

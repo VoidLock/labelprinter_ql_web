@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-This is a web service to print labels on Brother QL label printers.
+This is a web service to print labels on Brother QL and DYMO label printers.
 """
 
 import sys, logging, random, json, argparse
@@ -11,16 +11,14 @@ from io import BytesIO
 from bottle import run, route, get, post, response, request, jinja2_view as view, static_file, redirect
 from PIL import Image, ImageDraw, ImageFont
 
-from brother_ql.devicedependent import models, label_type_specs, label_sizes
-from brother_ql.devicedependent import ENDLESS_LABEL, DIE_CUT_LABEL, ROUND_DIE_CUT_LABEL
-from brother_ql import BrotherQLRaster, create_label
-from brother_ql.backends import backend_factory, guess_backend
-
 from font_helpers import get_fonts
+from backends import get_backend
 
 logger = logging.getLogger(__name__)
 
-LABEL_SIZES = [ (name, label_type_specs[name]['name']) for name in label_sizes]
+# Global variables
+PRINTER_BACKEND = None
+LABEL_SIZES = []
 
 try:
     with open('config.json', encoding='utf-8') as fh:
@@ -46,7 +44,8 @@ def labeldesigner():
             'fonts': FONTS,
             'label_sizes': LABEL_SIZES,
             'website': CONFIG['WEBSITE'],
-            'label': CONFIG['LABEL']}
+            'label': CONFIG['LABEL'],
+            'printer_type': CONFIG['PRINTER'].get('TYPE', 'brother_ql')}
 
 def get_label_context(request):
     """ might raise LookupError() """
@@ -61,7 +60,7 @@ def get_label_context(request):
       'font_family':   font_family,
       'font_style':    font_style,
       'label_size':    d.get('label_size', "62"),
-      'kind':          label_type_specs[d.get('label_size', "62")]['kind'],
+      'kind':          PRINTER_BACKEND.get_label_kind(d.get('label_size', "62")),
       'margin':    int(d.get('margin', 10)),
       'threshold': int(d.get('threshold', 70)),
       'align':         d.get('align', 'center'),
@@ -88,17 +87,17 @@ def get_label_context(request):
                 font_style_name =  CONFIG['LABEL']['DEFAULT_FONTS']['style']
             font_path = FONTS[font_family_name][font_style_name]
         except KeyError:
-            raise LookupError("Couln't find the font & style")
+            raise LookupError("Couldn't find the font & style")
         return font_path
 
     context['font_path'] = get_font_path(context['font_family'], context['font_style'])
 
     def get_label_dimensions(label_size):
         try:
-            ls = label_type_specs[context['label_size']]
-        except KeyError:
-            raise LookupError("Unknown label_size")
-        return ls['dots_printable']
+            width, height = PRINTER_BACKEND.get_label_dimensions(context['label_size'])
+        except (KeyError, AttributeError, LookupError) as e:
+            raise LookupError(f"Unknown label_size: {context['label_size']}")
+        return width, height
 
     width, height = get_label_dimensions(context['label_size'])
     if height > width: width, height = height, width
@@ -110,8 +109,7 @@ def get_label_context(request):
 def create_label_im(text, **kwargs):
     label_type = kwargs['kind']
     im_font = ImageFont.truetype(kwargs['font_path'], kwargs['font_size'])
-    im = Image.new('L', (20, 20), 'white')
-    draw = ImageDraw.Draw(im)
+    
     # workaround for a bug in multiline_textsize()
     # when there are empty lines in the text:
     lines = []
@@ -119,19 +117,41 @@ def create_label_im(text, **kwargs):
         if line == '': line = ' '
         lines.append(line)
     text = '\n'.join(lines)
-    linesize = im_font.getsize(text)
-    textsize = draw.multiline_textsize(text, font=im_font)
+    
+    # Create a temporary image to measure text size
+    temp_im = Image.new('L', (1, 1), 'white')
+    temp_draw = ImageDraw.Draw(temp_im)
+    
+    # Use textbbox for newer Pillow versions (getsize is deprecated)
+    try:
+        bbox = temp_draw.multiline_textbbox((0, 0), text, font=im_font)
+        textsize = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+    except AttributeError:
+        # Fallback for older Pillow versions
+        textsize = temp_draw.multiline_textsize(text, font=im_font)
+    
     width, height = kwargs['width'], kwargs['height']
+    
+    # Handle endless labels (Brother QL only)
     if kwargs['orientation'] == 'standard':
-        if label_type in (ENDLESS_LABEL,):
+        # For die-cut labels and DYMO labels, keep fixed dimensions
+        # For Brother QL endless labels, adjust height based on content
+        if label_type == 'endless':  # String for DYMO compatibility
             height = textsize[1] + kwargs['margin_top'] + kwargs['margin_bottom']
     elif kwargs['orientation'] == 'rotated':
-        if label_type in (ENDLESS_LABEL,):
+        if label_type == 'endless':
             width = textsize[0] + kwargs['margin_left'] + kwargs['margin_right']
+    
+    # Ensure minimum dimensions
+    if width < 1:
+        width = 1
+    if height < 1:
+        height = 1
+    
     im = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(im)
     if kwargs['orientation'] == 'standard':
-        if label_type in (DIE_CUT_LABEL, ROUND_DIE_CUT_LABEL):
+        if label_type in ('die-cut', 'round-die-cut'):
             vertical_offset  = (height - textsize[1])//2
             vertical_offset += (kwargs['margin_top'] - kwargs['margin_bottom'])//2
         else:
@@ -140,7 +160,7 @@ def create_label_im(text, **kwargs):
     elif kwargs['orientation'] == 'rotated':
         vertical_offset  = (height - textsize[1])//2
         vertical_offset += (kwargs['margin_top'] - kwargs['margin_bottom'])//2
-        if label_type in (DIE_CUT_LABEL, ROUND_DIE_CUT_LABEL):
+        if label_type in ('die-cut', 'round-die-cut'):
             horizontal_offset = max((width - textsize[0])//2, 0)
         else:
             horizontal_offset = kwargs['margin_left']
@@ -249,30 +269,26 @@ def print_grocy():
     im = create_label_grocy(**context)
     if DEBUG: im.save('sample-out.png')
 
-    if context['kind'] == ENDLESS_LABEL:
+    # Determine rotation based on label type
+    if context['kind'] == 'endless':
         rotate = 0 if context['orientation'] == 'standard' else 90
-    elif context['kind'] in (ROUND_DIE_CUT_LABEL, DIE_CUT_LABEL):
+    else:  # die-cut, round-die-cut
         rotate = 'auto'
 
-    qlr = BrotherQLRaster(CONFIG['PRINTER']['MODEL'])
-    red = False
-    if 'red' in context['label_size']:
-        red = True
-    create_label(qlr, im, context['label_size'], red=red, threshold=context['threshold'], cut=True, rotate=rotate)
-
-    if not DEBUG:
-        try:
-            be = BACKEND_CLASS(CONFIG['PRINTER']['PRINTER'])
-            be.write(qlr.data)
-            be.dispose()
-            del be
-        except Exception as e:
-            return_dict['message'] = str(e)
-            logger.warning('Exception happened: %s', e)
-            return return_dict
-
-    return_dict['success'] = True
-    if DEBUG: return_dict['data'] = str(qlr.data)
+    # Use the backend to print
+    red = 'red' in context['label_size']
+    result = PRINTER_BACKEND.print_label(
+        image=im,
+        label_size=context['label_size'],
+        printer_identifier=CONFIG['PRINTER']['PRINTER'],
+        model=CONFIG['PRINTER'].get('MODEL'),
+        threshold=context['threshold'],
+        rotate=rotate,
+        red=red,
+        debug=DEBUG
+    )
+    
+    return_dict.update(result)
     return return_dict
 
 @post('/api/print/text')
@@ -302,41 +318,38 @@ def print_text():
     im = create_label_im(**context)
     if DEBUG: im.save('sample-out.png')
 
-    if context['kind'] == ENDLESS_LABEL:
+    # Determine rotation based on label type
+    if context['kind'] == 'endless':
         rotate = 0 if context['orientation'] == 'standard' else 90
-    elif context['kind'] in (ROUND_DIE_CUT_LABEL, DIE_CUT_LABEL):
+    else:  # die-cut, round-die-cut
         rotate = 'auto'
 
-    qlr = BrotherQLRaster(CONFIG['PRINTER']['MODEL'])
-    red = False
-    if 'red' in context['label_size']:
-        red = True
-    create_label(qlr, im, context['label_size'], red=red, threshold=context['threshold'], cut=True, rotate=rotate)
-
-    if not DEBUG:
-        try:
-            be = BACKEND_CLASS(CONFIG['PRINTER']['PRINTER'])
-            be.write(qlr.data)
-            be.dispose()
-            del be
-        except Exception as e:
-            return_dict['message'] = str(e)
-            logger.warning('Exception happened: %s', e)
-            return return_dict
-
-    return_dict['success'] = True
-    if DEBUG: return_dict['data'] = str(qlr.data)
+    # Use the backend to print
+    red = 'red' in context['label_size']
+    result = PRINTER_BACKEND.print_label(
+        image=im,
+        label_size=context['label_size'],
+        printer_identifier=CONFIG['PRINTER']['PRINTER'],
+        model=CONFIG['PRINTER'].get('MODEL'),
+        threshold=context['threshold'],
+        rotate=rotate,
+        red=red,
+        debug=DEBUG
+    )
+    
+    return_dict.update(result)
     return return_dict
 
 def main():
-    global DEBUG, FONTS, BACKEND_CLASS, CONFIG
+    global DEBUG, FONTS, CONFIG, PRINTER_BACKEND, LABEL_SIZES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', default=False)
     parser.add_argument('--loglevel', type=lambda x: getattr(logging, x.upper()), default=False)
     parser.add_argument('--font-folder', default=False, help='folder for additional .ttf/.otf fonts')
     parser.add_argument('--default-label-size', default=False, help='Label size inserted in your printer. Defaults to 62.')
     parser.add_argument('--default-orientation', default=False, choices=('standard', 'rotated'), help='Label orientation, defaults to "standard". To turn your text by 90°, state "rotated".')
-    parser.add_argument('--model', default=False, choices=models, help='The model of your printer (default: QL-500)')
+    parser.add_argument('--model', default=False, help='The model of your printer (e.g., QL-500 for Brother QL, LabelWriter-450 for DYMO)')
+    parser.add_argument('--printer-type', default=False, choices=['brother_ql', 'dymo'], help='Type of printer: brother_ql or dymo')
     parser.add_argument('printer',  nargs='?', default=False, help='String descriptor for the printer to use (like tcp://192.168.0.23:9100 or file:///dev/usb/lp0)')
     args = parser.parse_args()
 
@@ -360,6 +373,9 @@ def main():
 
     if args.model:
         CONFIG['PRINTER']['MODEL'] = args.model
+        
+    if args.printer_type:
+        CONFIG['PRINTER']['TYPE'] = args.printer_type
 
     if args.default_label_size:
         CONFIG['LABEL']['DEFAULT_SIZE'] = args.default_label_size
@@ -372,17 +388,26 @@ def main():
     else:
         ADDITIONAL_FONT_FOLDER = CONFIG['SERVER']['ADDITIONAL_FONT_FOLDER']
 
-
     logging.basicConfig(level=LOGLEVEL)
 
+    # Initialize printer backend based on configuration
+    # Default to brother_ql for backward compatibility
+    printer_type = CONFIG['PRINTER'].get('TYPE', 'brother_ql')
+    
     try:
-        selected_backend = guess_backend(CONFIG['PRINTER']['PRINTER'])
-    except ValueError:
-        parser.error("Couln't guess the backend to use from the printer string descriptor")
-    BACKEND_CLASS = backend_factory(selected_backend)['backend_class']
-
-    if CONFIG['LABEL']['DEFAULT_SIZE'] not in label_sizes:
-        parser.error("Invalid --default-label-size. Please choose on of the following:\n:" + " ".join(label_sizes))
+        PRINTER_BACKEND = get_backend(printer_type)
+        logger.info(f"Initialized {printer_type} printer backend")
+    except Exception as e:
+        logger.error(f"Failed to initialize printer backend: {e}")
+        sys.exit(1)
+    
+    # Get label sizes from backend
+    LABEL_SIZES = PRINTER_BACKEND.get_label_sizes()
+    
+    # Validate default label size
+    if not PRINTER_BACKEND.validate_label_size(CONFIG['LABEL']['DEFAULT_SIZE']):
+        available_sizes = [size[0] for size in LABEL_SIZES]
+        parser.error(f"Invalid --default-label-size. Please choose one of the following:\n" + " ".join(available_sizes))
 
     FONTS = get_fonts()
     if ADDITIONAL_FONT_FOLDER:
