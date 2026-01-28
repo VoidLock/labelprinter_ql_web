@@ -109,8 +109,7 @@ def get_label_context(request):
 def create_label_im(text, **kwargs):
     label_type = kwargs['kind']
     im_font = ImageFont.truetype(kwargs['font_path'], kwargs['font_size'])
-    im = Image.new('L', (20, 20), 'white')
-    draw = ImageDraw.Draw(im)
+    
     # workaround for a bug in multiline_textsize()
     # when there are empty lines in the text:
     lines = []
@@ -118,8 +117,19 @@ def create_label_im(text, **kwargs):
         if line == '': line = ' '
         lines.append(line)
     text = '\n'.join(lines)
-    linesize = im_font.getsize(text)
-    textsize = draw.multiline_textsize(text, font=im_font)
+    
+    # Create a temporary image to measure text size
+    temp_im = Image.new('L', (1, 1), 'white')
+    temp_draw = ImageDraw.Draw(temp_im)
+    
+    # Use textbbox for newer Pillow versions (getsize is deprecated)
+    try:
+        bbox = temp_draw.multiline_textbbox((0, 0), text, font=im_font)
+        textsize = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+    except AttributeError:
+        # Fallback for older Pillow versions
+        textsize = temp_draw.multiline_textsize(text, font=im_font)
+    
     width, height = kwargs['width'], kwargs['height']
     
     # Handle endless labels (Brother QL only)
@@ -131,6 +141,12 @@ def create_label_im(text, **kwargs):
     elif kwargs['orientation'] == 'rotated':
         if label_type == 'endless':
             width = textsize[0] + kwargs['margin_left'] + kwargs['margin_right']
+    
+    # Ensure minimum dimensions
+    if width < 1:
+        width = 1
+    if height < 1:
+        height = 1
     
     im = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(im)
