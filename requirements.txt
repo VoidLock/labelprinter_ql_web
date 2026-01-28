@@ -2,4 +2,4 @@ brother_ql
 bottle
 jinja2
 pylibdmtx
-dymopy>=0.1.0
+dymopy>=0.1.0,<1.0.0

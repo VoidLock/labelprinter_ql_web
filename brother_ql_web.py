@@ -87,7 +87,7 @@ def get_label_context(request):
                 font_style_name =  CONFIG['LABEL']['DEFAULT_FONTS']['style']
             font_path = FONTS[font_family_name][font_style_name]
         except KeyError:
-            raise LookupError("Couln't find the font & style")
+            raise LookupError("Couldn't find the font & style")
         return font_path
 
     context['font_path'] = get_font_path(context['font_family'], context['font_style'])
@@ -95,8 +95,8 @@ def get_label_context(request):
     def get_label_dimensions(label_size):
         try:
             width, height = PRINTER_BACKEND.get_label_dimensions(context['label_size'])
-        except:
-            raise LookupError("Unknown label_size")
+        except (KeyError, AttributeError, LookupError) as e:
+            raise LookupError(f"Unknown label_size: {context['label_size']}")
         return width, height
 
     width, height = get_label_dimensions(context['label_size'])

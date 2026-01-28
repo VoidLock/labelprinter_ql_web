@@ -67,6 +67,7 @@ class DymoBackend:
     
     def _print_via_cups(self, image, label_size, printer_name, debug=False):
         """Print using CUPS (Linux standard printing)"""
+        tmp_filename = None
         try:
             # Save image to temporary file
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
@@ -81,7 +82,7 @@ class DymoBackend:
             # Extract printer name from various formats
             if printer_name.startswith('file://'):
                 # For file:// URIs, we can't use CUPS directly
-                # Copy the image to the device
+                # Note: This may not work properly for DYMO printers which require specific data format
                 device_path = printer_name.replace('file://', '')
                 with open(tmp_filename, 'rb') as img_file:
                     with open(device_path, 'wb') as dev_file:
@@ -107,17 +108,22 @@ class DymoBackend:
                     logger.error(f"CUPS print failed: {result.stderr}")
                     return {'success': False, 'message': f"Print failed: {result.stderr}"}
             
-            # Clean up temp file
-            os.unlink(tmp_filename)
-            
             return {'success': True}
             
         except Exception as e:
             logger.error(f"CUPS printing error: {e}")
             return {'success': False, 'message': str(e)}
+        finally:
+            # Clean up temp file
+            if tmp_filename and os.path.exists(tmp_filename):
+                try:
+                    os.unlink(tmp_filename)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp file {tmp_filename}: {e}")
     
     def _print_via_dymopy(self, image, label_size, printer_name, debug=False):
         """Print using dymopy library"""
+        tmp_filename = None
         try:
             import dymopy
             
@@ -136,14 +142,18 @@ class DymoBackend:
             # Print the label
             printer.print_image(tmp_filename)
             
-            # Clean up
-            os.unlink(tmp_filename)
-            
             return {'success': True}
             
         except Exception as e:
             logger.error(f"Dymopy printing error: {e}")
             return {'success': False, 'message': str(e)}
+        finally:
+            # Clean up temp file
+            if tmp_filename and os.path.exists(tmp_filename):
+                try:
+                    os.unlink(tmp_filename)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp file {tmp_filename}: {e}")
     
     def print_label(self, image, label_size, printer_identifier, model=None,
                     threshold=70, rotate='auto', red=False, debug=False):
@@ -211,18 +221,20 @@ class DymoBackend:
             
             # Save debug image if in debug mode
             if debug:
-                debug_path = '/tmp/dymo_label_debug.png'
-                image.save(debug_path)
-                logger.debug(f"Saved debug label image to {debug_path}")
+                try:
+                    debug_path = os.path.join(tempfile.gettempdir(), 'dymo_label_debug.png')
+                    image.save(debug_path)
+                    logger.debug(f"Saved debug label image to {debug_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to save debug image: {e}")
             
             # Choose printing method based on available library
             if self.dymo_lib == 'dymopy':
                 result = self._print_via_dymopy(image, label_size, printer_identifier, debug)
             elif self.dymo_lib == 'dymoapi':
-                # TODO: Implement dymoapi printing if needed
-                result = {'success': False, 'message': 'dymoapi not yet implemented, falling back to CUPS'}
-                if result['success'] is False:
-                    result = self._print_via_cups(image, label_size, printer_identifier, debug)
+                # Dymoapi not yet implemented, fall back to CUPS
+                logger.warning("dymoapi not yet implemented, falling back to CUPS")
+                result = self._print_via_cups(image, label_size, printer_identifier, debug)
             else:
                 # Fall back to CUPS
                 result = self._print_via_cups(image, label_size, printer_identifier, debug)
