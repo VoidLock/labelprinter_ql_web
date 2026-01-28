@@ -5,6 +5,11 @@
 {% block jumbotron %}
   <h1>{{ website['PAGE_TITLE'] }}</h1>
   <p>{{ website['PAGE_HEADLINE'] }}</p>
+  {% if printer_type == 'dymo' %}
+  <p style="font-size: 14px; color: #666;"><span class="glyphicon glyphicon-print"></span> Printer: DYMO LabelWriter</p>
+  {% else %}
+  <p style="font-size: 14px; color: #666;"><span class="glyphicon glyphicon-print"></span> Printer: Brother QL</p>
+  {% endif %}
   <!--<p><a class="btn btn-primary btn-lg" href="#" role="button">History of printed labels</a></p>-->
 {% endblock %}
 
