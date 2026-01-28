@@ -1,6 +1,6 @@
 ## labelprinter\_ql\_web
 
-This is a web service to print labels on QL label printers.
+This is a web service to print labels on label printers.
 
 You need Python 3 for this software to work.
 
@@ -108,7 +108,7 @@ To start the server, run `./labelprinter_ql_web.py`. The command line parameters
                              [--printer-type {brother_ql,dymo}]
                              [printer]
     
-    This is a web service to print labels on QL label printers.
+    This is a web service to print labels on label printers.
     
     positional arguments:
       printer               String descriptor for the printer to use (like

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-This is a web service to print labels on QL label printers.
+This is a web service to print labels on label printers.
 """
 
 import sys, logging, random, json, argparse
